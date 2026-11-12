@@ -1,0 +1,10 @@
+# Direct dependencies verified on Python 3.12 / macOS arm64.
+# PyTorch GPU support on Colab must be checked separately.
+numpy==2.5.4
+pandas==3.1.1
+librosa==1.0.0
+soundfile==0.14.0
+scikit-learn==1.9.1
+matplotlib==3.11.2
+seaborn==0.13.2
+torch==2.15.0
