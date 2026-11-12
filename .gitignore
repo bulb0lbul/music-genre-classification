@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Local environments and secrets
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# macOS and editors
+.DS_Store
+.vscode/
+.idea/
+
+# Data and generated results
+/data/*
+!/data/.gitkeep
+/artifacts/*
+!/artifacts/.gitkeep
+/reports/*
+!/reports/.gitkeep
+
+# Audio, arrays, models, and dataset archives
+*.mp3
+*.wav
+*.flac
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.zip
+*.tar
+*.tar.gz
