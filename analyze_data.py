@@ -10,36 +10,7 @@ from prepare_data import GENRES, SPLITS, save_csv, save_json
 SPLIT_ORDER = ("train", "validation", "test")
 
 
-def plot_overview(clean: pd.DataFrame, genres: pd.DataFrame, reasons: pd.DataFrame, path: Path) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10), layout="constrained")
-    genres.set_index("genre")[["before", "after"]].rename( columns={"before": "До очистки", "after": "После очистки"} ).plot.barh(ax=axes[0, 0], color=["#b8c5d6", "#337c9e"], width=0.8)
-    axes[0, 0].set(title="Записи по жанрам", xlabel="Количество записей", ylabel="")
-    axes[0, 0].legend(title="", fontsize=9)
-    clean["duration_seconds"].plot.hist(ax=axes[0, 1], bins=25, color="#337c9e", edgecolor="white")
-    axes[0, 1].set(title="Длительность оставленных записей", xlabel="Секунды", ylabel="Количество записей")
-    clean["sample_rate"].value_counts().sort_index().rename_axis("Частота, Гц").plot.bar( ax=axes[1, 0], color="#537b63", rot=0 )
-    axes[1, 0].set(title="Исходные частоты дискретизации", ylabel="Количество записей")
-    if not reasons.empty:
-        labels = {
-            "decoder_reported_error": "Ошибки декодера", "decode_error": "Не декодируется",
-            "decode_error;decoder_reported_error": "Не декодируется + ошибки кадров",
-            "duplicate_same_split": "Повторная запись", "duplicate_label_conflict": "Конфликт меток дубликатов",
-        }
-        axes[1, 1].barh([labels.get(reason, reason) for reason in reasons["reason"]], reasons["count"], color="#ba7866")
-    else:
-        axes[1, 1].text(0.5, 0.5, "Исключений нет", ha="center", va="center")
-    axes[1, 1].set(title="Исключения: непересекающиеся группы причин", xlabel="Количество записей")
-    fig.suptitle("FMA small: результаты подготовки данных", fontsize=16)
-    fig.savefig(path, dpi=160)
-    plt.close(fig)
-
-
-
-def analyze_data(data_dir: Path, processed_dir: Path, output_dir: Path) -> dict:
+def analyze_data(data_dir: Path, processed_dir: Path, output_dir: Path, make_plots: bool = True) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     checks = []
     report = {"status": "running"}
@@ -106,10 +77,31 @@ def analyze_data(data_dir: Path, processed_dir: Path, output_dir: Path) -> dict:
         durations = clean["duration_seconds"].describe().to_dict()
         report.update(before=len(before), after=len(clean), excluded=len(excluded), by_split=clean["split"].value_counts().to_dict(), duration_seconds=durations, sample_rates=frequencies.to_dict("records"), channels=channels.to_dict("records"))
         print(f"\nДо очистки: {len(before)}; после: {len(clean)}; исключено: {len(excluded)}")
-        for title, frame in (("Жанры и выборки", genres), ("Причины исключений", reasons), ("Частоты дискретизации", frequencies), ("Число каналов", channels)):
+        for title, frame in (("Жанры и выборки", genres), ("Причины исключений", reasons), ("Исходные частоты дискретизации", frequencies), ("Исходное число каналов", channels)):
             print(f"\n{title}:\n{frame.to_string(index=False)}")
-        print(f"\nДлительность: {durations['min']:.4f}–{durations['max']:.4f} с; средняя {durations['mean']:.4f} с")
-        plot_overview(clean, genres, reasons, output_dir / "overview.png")
+        print(f"\nИсходная длительность: {durations['min']:.4f}–{durations['max']:.4f} с; средняя {durations['mean']:.4f} с")
+        trim_path = processed_dir / "tracks_trimmed.csv"
+        if trim_path.is_file():
+            trimmed = pd.read_csv(trim_path)
+            resampled = pd.read_csv(processed_dir / "tracks_resampled.csv")
+            identity = ["genre", "label", "split", "artist_id"]
+            preserved = len(trimmed) == len(clean) and trimmed["track_id"].is_unique and trimmed.set_index("track_id")[identity].sort_index().equals(clean.set_index("track_id")[identity].sort_index())
+            check("Обрезка: ID, жанры и выборки сохранены", preserved)
+            provenance = trimmed.merge(clean, on="track_id", suffixes=("_processed", "_original"), validate="one_to_one")
+            source_ok = provenance["audio_path_processed"].eq(provenance["audio_path_original"]).all() and provenance["source_audio_path"].eq(provenance["audio_path_original"]).all() and provenance["source_sample_rate"].eq(provenance["sample_rate_original"]).all() and provenance["source_channels"].eq(provenance["channels_original"]).all() and provenance["source_frames"].eq(provenance["frames_original"]).all()
+            check("Обработка: исходные пути, частоты, каналы и длины сохранены", source_ok)
+            target_frames = int(resampled["frames"].min())
+            valid_trim = trimmed["sample_rate"].eq(44100).all() and trimmed["channels"].eq(1).all() and trimmed["frames"].eq(target_frames).all() and trimmed["trim_start_frame"].eq(0).all() and trimmed["trim_end_frame"].eq(target_frames).all() and trimmed["cropped_frames"].eq(trimmed["frames_before_trim"] - target_frames).all()
+            from trim_audio import load_trimmed_audio
+            for row in trimmed.drop_duplicates("frames_before_trim").itertuples():
+                load_trimmed_audio(data_dir / row.audio_path, target_frames)
+            check("Обрезка при загрузке: единая длина, начало с нуля и частота 44 100 Гц", valid_trim)
+            check("Обрезка: входные аудиофайлы доступны", all((data_dir / path).is_file() for path in trimmed["audio_path"]))
+            report["trimmed_audio"] = dict(tracks=len(trimmed), sample_rate=44100, frames=target_frames, duration_seconds=target_frames / 44100, trimmed=int(trimmed["was_trimmed"].sum()), max_cropped_frames=int(trimmed["cropped_frames"].max()))
+            print(f"\nПосле обрезки при загрузке: {target_frames} отсчётов; {target_frames / 44100:.8f} с; 44 100 Гц", flush=True)
+        if make_plots:
+            from plot_data import plot_overview
+            plot_overview(clean, genres, reasons, Path(__file__).resolve().parent / "plots/overview.png")
     except (OSError, ValueError, KeyError, TypeError) as error:
         check(str(error), False)
     report["errors"] = sum(item["status"] == "error" for item in checks)
@@ -125,10 +117,11 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent / "data")
     parser.add_argument("--processed-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "reports/data_analysis")
+    parser.add_argument("--no-plots", action="store_true", help="Пропустить графики; в пайплайне они строятся отдельным этапом.")
     args = parser.parse_args()
     data_dir = args.data_dir.expanduser().resolve()
     try:
-        report = analyze_data(data_dir, args.processed_dir or data_dir / "processed", args.output_dir)
+        report = analyze_data(data_dir, args.processed_dir or data_dir / "processed", args.output_dir, make_plots=not args.no_plots)
     except OSError as error:
         parser.exit(1, f"Ошибка записи отчёта: {error}\n")
     if report["errors"]:
