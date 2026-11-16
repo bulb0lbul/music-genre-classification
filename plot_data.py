@@ -430,10 +430,121 @@ def plot_overview(clean: pd.DataFrame, genres: pd.DataFrame, reasons: pd.DataFra
     plt.close(fig)
 
 
+def plot_mel_spectrogram(spectrogram, sample_rate: int, hop_length: int, path: Path, title: str, power_max: float | None = None) -> None:
+    import librosa.display
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    limit = float(np.percentile(spectrogram, 99)) if power_max is None else power_max
+    if power_max is None and limit == 0:
+        limit = float(spectrogram.max())
+    if not np.isfinite(limit) or limit <= 0:
+        raise ValueError("Верхняя граница мощности должна быть положительным конечным числом.")
+    clipped = float(np.mean(spectrogram > limit)) * 100
+    fig, axis = plt.subplots(figsize=(14, 6), layout="constrained")
+    display = librosa.display.specshow(spectrogram, sr=sample_rate, hop_length=hop_length, x_axis="time", y_axis="mel", cmap="magma", vmin=0, vmax=limit, ax=axis)
+    axis.set(title=f"Мел-спектрограмма мощности · {title}", xlabel="Время от начала записи, с", ylabel="Частота, Гц · мел-шкала")
+    fig.colorbar(display, ax=axis, label="Мощность", extend="max" if clipped > 0 else "neither")
+    fig.supxlabel(f"{spectrogram.shape[0]} мел-полос × {spectrogram.shape[1]} временных кадров · {sample_rate} Гц · шаг {hop_length} отсчётов\nЦветовая шкала: 0–{limit:.2f}. Выше границы: {clipped:.2f}% значений, показаны максимальным цветом. Максимум массива: {spectrogram.max():.2f}.", fontsize=10)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_mel_scale_comparison(spectrogram, sample_rate: int, hop_length: int, path: Path, title: str) -> None:
+    import librosa.display
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from log_spectrograms import TOP_DB, to_log_mel
+
+    log_power = to_log_mel(spectrogram)
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True, sharey=True, layout="constrained")
+    linear = librosa.display.specshow(spectrogram, sr=sample_rate, hop_length=hop_length, x_axis="time", y_axis="mel", cmap="magma", vmin=0, vmax=float(spectrogram.max()), ax=axes[0])
+    axes[0].set(title=f"Линейная шкала · полный диапазон мощности 0–{spectrogram.max():.2f}", ylabel="Частота, Гц · мел-шкала")
+    fig.colorbar(linear, ax=axes[0], label="Мощность")
+    logarithmic = librosa.display.specshow(log_power, sr=sample_rate, hop_length=hop_length, x_axis="time", y_axis="mel", cmap="magma", ax=axes[1])
+    axes[1].set(title=f"Логарифмическая мощность · ref=1 · top_db={TOP_DB:g}", xlabel="Время от начала записи, с", ylabel="Частота, Гц · мел-шкала")
+    fig.colorbar(logarithmic, ax=axes[1], label="Мощность, дБ")
+    axes[0].set_xlabel("")
+    fig.suptitle(f"Одна мел-спектрограмма · две цветовые шкалы · {title}", fontsize=15)
+    fig.supxlabel(f"дБ = 10 × log₁₀(P / 1) · amin=10⁻¹⁰. Значения ниже максимума на {TOP_DB:g} дБ приравнены к нижнему порогу.", fontsize=10)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_log_mel_spectrogram(spectrogram, sample_rate: int, hop_length: int, path: Path, title: str) -> None:
+    import librosa.display
+    from log_spectrograms import REFERENCE_POWER, TOP_DB
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axis = plt.subplots(figsize=(14, 6), layout="constrained")
+    display = librosa.display.specshow(spectrogram, sr=sample_rate, hop_length=hop_length, x_axis="time", y_axis="mel", cmap="magma", ax=axis)
+    axis.set(title=f"Логарифмическая мел-спектрограмма · {title}", xlabel="Время от начала записи, с", ylabel="Частота, Гц · мел-шкала")
+    fig.colorbar(display, ax=axis, label=f"Мощность, дБ относительно {REFERENCE_POWER:g}")
+    fig.supxlabel(f"{spectrogram.shape[0]} мел-полос × {spectrogram.shape[1]} кадров · {sample_rate} Гц · шаг {hop_length}\nЗначения ниже максимума на {TOP_DB:g} дБ приравнены к нижнему порогу.", fontsize=10)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_log_mel_examples(examples: list, path: Path) -> None:
+    import librosa.display
+    from create_spectrograms import HOP_LENGTH
+    from log_spectrograms import TOP_DB
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = (len(examples) + 1) // 2
+    fig, axes = plt.subplots(rows, 2, figsize=(16, rows * 3.5), squeeze=False, sharex=True, sharey=True, layout="constrained")
+    lower = min(float(example["spectrogram"].min()) for example in examples)
+    upper = max(float(example["spectrogram"].max()) for example in examples)
+    for axis, example in zip(axes.flat, examples):
+        display = librosa.display.specshow(example["spectrogram"], sr=example["sample_rate"], hop_length=HOP_LENGTH, x_axis="time", y_axis="mel", cmap="magma", vmin=lower, vmax=upper, ax=axis)
+        axis.set(title=f"{example['genre']} · {example['track_id']:06d}", xlabel="Время, с", ylabel="Частота, Гц")
+        axis.label_outer()
+    for axis in list(axes.flat)[len(examples):]:
+        axis.set_visible(False)
+    fig.colorbar(display, ax=list(axes.flat), label="Мощность, дБ относительно 1", shrink=0.8)
+    fig.suptitle("Лог-мел-спектрограммы · примеры восьми жанров из train", fontsize=16)
+    fig.supxlabel(f"Общая цветовая шкала · ref=1 · top_db={TOP_DB:g} · по одной записи на жанр, не оценка всего набора", fontsize=10)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_log_mel_diagnostics(examples: list, summary: pd.DataFrame, path: Path) -> None:
+    from log_spectrograms import TOP_DB
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = min(4, len(examples))
+    rows = (len(examples) + columns - 1) // columns
+    fig = plt.figure(figsize=(16, rows * 3 + 3.5), layout="constrained")
+    grid = fig.add_gridspec(rows + 1, columns)
+    lower = min(float(example["spectrogram"].min()) for example in examples)
+    upper = max(float(example["spectrogram"].max()) for example in examples)
+    bins = np.linspace(lower, upper, 61)
+    histogram_axes = []
+    for index, (example, row) in enumerate(zip(examples, summary.itertuples(index=False))):
+        axis = fig.add_subplot(grid[index // columns, index % columns])
+        values = example["spectrogram"].ravel()
+        axis.hist(values, bins=bins, weights=np.full(values.size, 100 / values.size), color="#337c9e")
+        axis.axvline(row.cutoff_db, color="#ba594d", linestyle="--")
+        axis.set(title=f"{example['genre']} · {example['track_id']:06d}\nПорог {row.cutoff_db:.1f} дБ · изменено {row.floored_percent:.2f}%", xlabel="Мощность, дБ относительно 1", ylabel="Доля элементов, %", xlim=(lower - 2, upper + 2))
+        histogram_axes.append(axis)
+    y_max = max(axis.get_ylim()[1] for axis in histogram_axes)
+    for axis in histogram_axes:
+        axis.set_ylim(0, y_max)
+    axis = fig.add_subplot(grid[rows, :])
+    labels = [f"{row.genre}\n{row.track_id:06d}" for row in summary.itertuples(index=False)]
+    bars = axis.bar(labels, summary["floored_percent"], color="#ba7866")
+    axis.bar_label(bars, fmt="%.2f%%", padding=4)
+    axis.set(title=f"Доля элементов, изменённых порогом «максимум записи − {TOP_DB:g} дБ»", ylabel="Изменённые элементы, %", ylim=(0, max(1.0, float(summary["floored_percent"].max()) * 1.25)))
+    fig.suptitle("Проверка логарифмирования · распределения и влияние нижнего порога", fontsize=16)
+    fig.supxlabel("По одному примеру каждого жанра из train · одинаковые интервалы гистограмм и масштаб по доле элементов", fontsize=10)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Построить графики подготовленных данных.")
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent / "data")
-    parser.add_argument("--kind", choices=("all", "waveforms", "examples", "resampling", "mono-origins", "trimming", "audio-check"), default="all", help="Группа графиков; по умолчанию все.")
+    parser.add_argument("--kind", choices=("all", "waveforms", "examples", "resampling", "mono-origins", "trimming", "audio-check", "spectrogram", "log-spectrograms"), default="all", help="Группа графиков; по умолчанию все.")
+    parser.add_argument("--power-max", type=float, help="Верхняя граница цветовой шкалы спектрограммы; по умолчанию 99-й перцентиль мощности.")
     parser.add_argument("--seed", type=int, help="Фиксировать случайный выбор записей для звуковых волн.")
     args = parser.parse_args()
     data_dir = args.data_dir.expanduser().resolve()
@@ -452,6 +563,17 @@ def main() -> None:
         plot_trimming(trimmed, data_dir, output_dir / "trimming_examples.png")
     if args.kind in ("all", "audio-check"):
         create_audio_check_plots(data_dir, output_dir / "audio_check")
+    if args.kind in ("all", "spectrogram"):
+        from create_spectrograms import create_spectrogram_example, HOP_LENGTH
+        row, _, sample_rate, spectrogram = create_spectrogram_example(data_dir)
+        path = output_dir / f"mel_spectrogram_{int(row.track_id):06d}.png"
+        plot_mel_spectrogram(spectrogram, sample_rate, HOP_LENGTH, path, f"{int(row.track_id):06d} · {row.genre}", power_max=args.power_max)
+        plot_mel_scale_comparison(spectrogram, sample_rate, HOP_LENGTH, output_dir / f"mel_scale_comparison_{int(row.track_id):06d}.png", f"{int(row.track_id):06d} · {row.genre}")
+    if args.kind in ("all", "log-spectrograms"):
+        from log_spectrograms import prepare_log_examples
+        examples, summary = prepare_log_examples(data_dir)
+        plot_log_mel_examples(examples, output_dir / "log_mel_examples.png")
+        plot_log_mel_diagnostics(examples, summary, output_dir / "log_mel_diagnostics.png")
     if args.kind == "mono-origins":
         original = pd.read_csv(data_dir / "processed/tracks_clean.csv")
         mono = pd.read_csv(data_dir / "processed/tracks_mono.csv")
