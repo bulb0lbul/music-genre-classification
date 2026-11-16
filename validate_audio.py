@@ -155,12 +155,19 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--min-duration", type=float, default=29.0)
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--no-plots", action="store_true", help="Пропустить графики; в пайплайне они строятся отдельным этапом.")
     args = parser.parse_args()
     if not math.isfinite(args.min_duration) or not 0 < args.min_duration <= 30 or args.workers < 1:
         parser.error("Нужны 0 < min-duration <= 30 и workers >= 1.")
     data_dir = args.data_dir.expanduser().resolve()
     try:
-        summary = validate_dataset(data_dir, args.manifest or data_dir / "processed/tracks_metadata.csv", args.output_dir or data_dir / "processed", args.min_duration, args.workers)
+        output_dir = args.output_dir or data_dir / "processed"
+        summary = validate_dataset(data_dir, args.manifest or data_dir / "processed/tracks_metadata.csv", output_dir, args.min_duration, args.workers)
+        if not args.no_plots:
+            from plot_data import plot_validation
+            audit = pd.read_csv(output_dir / "audio_audit.csv", keep_default_na=False)
+            clean = pd.read_csv(output_dir / "tracks_clean.csv", keep_default_na=False)
+            plot_validation(audit, clean, Path(__file__).resolve().parent / "plots")
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         parser.exit(1, f"Ошибка проверки аудио: {error}\n")
     if not summary["safe_for_training"]:

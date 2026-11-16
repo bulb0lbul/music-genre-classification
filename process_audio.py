@@ -1,8 +1,11 @@
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import soundfile as sf
+
+from prepare_data import save_csv
 
 
 def load_audio(path: Path):
@@ -23,23 +26,31 @@ def load_mono_audio(path: Path):
     return to_mono(audio), sample_rate
 
 
-def prepare_mono_dataset(data_dir: Path, make_plots: bool = True) -> None:
+def rms_envelope(audio, sample_rate: int):
+    size = max(1, sample_rate // 10)
+    count = len(audio) // size
+    if not count:
+        return np.array([0.0]), np.array([np.sqrt(np.mean(np.square(audio, dtype=np.float64)))])
+    values = audio[:count * size].reshape(count, -1).astype(np.float64)
+    return (np.arange(count) + 0.5) * size / sample_rate, np.sqrt(np.mean(values * values, axis=1))
+
+
+def prepare_mono_dataset(data_dir: Path) -> pd.DataFrame:
     tracks = pd.read_csv(data_dir / "processed/tracks_clean.csv")
-    records = []
-    for row in tracks.itertuples():
-        if not (data_dir / row.audio_path).is_file():
-            raise FileNotFoundError(f"Аудиофайл не найден: {row.audio_path}")
-        records.append(dict(track_id=row.track_id, genre=row.genre, label=row.label, split=row.split, artist_id=row.artist_id, source_audio_path=row.audio_path, audio_path=row.audio_path, source_channels=row.channels, sample_rate=row.sample_rate, channels=1, frames=row.frames, duration_seconds=row.duration_seconds))
+    if tracks.empty:
+        raise ValueError("Очищенный набор пуст.")
+    for path in tracks["audio_path"]:
+        if not (data_dir / path).is_file():
+            raise FileNotFoundError(f"Аудиофайл не найден: {path}")
+    processed = tracks[["track_id", "genre", "label", "split", "artist_id", "audio_path", "sample_rate", "channels", "frames", "duration_seconds"]].copy()
+    for column in ("sample_rate", "channels", "frames", "duration_seconds"):
+        processed[f"source_{column}"] = processed[column]
+    processed["channels"] = 1
     path = data_dir / "processed/tracks_mono.csv"
-    processed = pd.DataFrame(records)
-    processed.to_csv(path, index=False)
-    if make_plots:
-        from plot_data import plot_mono_dataset, plot_waveforms, create_example_plots
-        plot_mono_dataset(tracks, processed, data_dir, Path(__file__).resolve().parent / "plots/mono")
-        plot_waveforms(processed, data_dir, Path(__file__).resolve().parent / "plots/random_waveforms.png")
-        create_example_plots(data_dir, Path(__file__).resolve().parent / "plots")
+    save_csv(path, processed)
     print(f"Подготовлено для сведения в моно при загрузке: {len(processed)} записей; WAV-копии не создаются.", flush=True)
     print(f"Таблица: {path}", flush=True)
+    return processed
 
 
 def main() -> None:
@@ -55,7 +66,15 @@ def main() -> None:
         parser.error("Укажите путь к записи или --all.")
     try:
         if args.all:
-            prepare_mono_dataset(args.data_dir.expanduser().resolve(), make_plots=not args.no_plots)
+            data_dir = args.data_dir.expanduser().resolve()
+            processed = prepare_mono_dataset(data_dir)
+            if not args.no_plots:
+                from plot_data import plot_mono_dataset, plot_waveforms, create_example_plots
+                original = pd.read_csv(data_dir / "processed/tracks_clean.csv")
+                plots_dir = Path(__file__).resolve().parent / "plots"
+                plot_mono_dataset(original, processed, data_dir, plots_dir / "mono")
+                plot_waveforms(processed, data_dir, plots_dir / "random_waveforms.png")
+                create_example_plots(data_dir, plots_dir)
         else:
             path = args.audio_path.expanduser().resolve()
             audio, sample_rate = load_audio(path)

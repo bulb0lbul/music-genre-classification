@@ -10,6 +10,14 @@ ARCHIVES = {"metadata": "fma_metadata", "audio": "fma_small"}
 BASE_URL = "https://os.unil.cloud.switch.ch/fma"
 
 
+def dataset_ready(data_dir: Path, kind: str) -> bool:
+    folder = data_dir / ARCHIVES[kind]
+    if kind == "metadata":
+        return all((folder / name).is_file() and (folder / name).stat().st_size > 0 for name in ("tracks.csv", "genres.csv"))
+    files = list(folder.glob("*/*.mp3"))
+    return len(files) == 8000 and all(path.is_file() and path.stat().st_size > 0 for path in files)
+
+
 def download_archive(data_dir: Path, name: str) -> Path:
     archive_path = data_dir / f"{name}.zip"
     if archive_path.is_file():
@@ -54,18 +62,18 @@ def extract_archive(archive_path: Path, data_dir: Path, name: str, kind: str) ->
             (temporary_dir / name).rename(data_dir / name)
 
 
-def prepare_data(data_dir: Path, only: str = "all") -> None:
+def download_dataset(data_dir: Path, only: str = "all") -> None:
     data_dir = data_dir.expanduser().resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     kinds = ("metadata", "audio") if only == "all" else (only,)
     for kind in kinds:
         name = ARCHIVES[kind]
         folder = data_dir / name
-        if folder.is_dir():
+        if dataset_ready(data_dir, kind):
             print(f"Папка уже есть, пропускаю: {folder}", flush=True)
             continue
         if folder.exists():
-            raise FileExistsError(f"Вместо папки найден файл: {folder}")
+            raise ValueError(f"Набор в {folder} неполон: для метаданных нужны непустые tracks.csv и genres.csv, для FMA small — 8 000 непустых MP3. Проверьте содержимое папки перед повторным скачиванием.")
         archive_path = download_archive(data_dir, name)
         extract_archive(archive_path, data_dir, name, kind)
         print(f"Готово: {folder}", flush=True)
@@ -77,7 +85,7 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent / "data")
     args = parser.parse_args()
     try:
-        prepare_data(args.data_dir, args.only)
+        download_dataset(args.data_dir, args.only)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile, IncompleteRead) as error:
         parser.exit(1, f"Ошибка: {error}\n")
 

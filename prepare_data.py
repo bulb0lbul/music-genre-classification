@@ -19,7 +19,9 @@ def save_json(path: Path, data: dict) -> None:
 
 
 def save_csv(path: Path, table: pd.DataFrame) -> None:
-    table.to_csv(path, index=False)
+    temporary = path.with_suffix(path.suffix + ".part")
+    table.to_csv(temporary, index=False)
+    temporary.replace(path)
 
 
 def positive_id(value) -> int | None:
@@ -78,10 +80,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Подготовить метаданные FMA small.")
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent / "data")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--no-plots", action="store_true", help="Пропустить графики; в пайплайне они строятся отдельным этапом.")
     args = parser.parse_args()
     data_dir = args.data_dir.expanduser().resolve()
     try:
-        prepare_metadata(data_dir, args.output_dir or data_dir / "processed")
+        table = prepare_metadata(data_dir, args.output_dir or data_dir / "processed")
+        if not args.no_plots:
+            from plot_data import plot_metadata
+            plot_metadata(table, Path(__file__).resolve().parent / "plots")
     except (OSError, ValueError, KeyError) as error:
         parser.exit(1, f"Ошибка подготовки данных: {error}\n")
 

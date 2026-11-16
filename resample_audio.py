@@ -3,6 +3,7 @@ from pathlib import Path
 
 import librosa
 import pandas as pd
+from prepare_data import save_csv
 from process_audio import load_mono_audio
 
 
@@ -20,29 +21,21 @@ def load_resampled_audio(path: Path):
     return resample_signal(audio, sample_rate)
 
 
-def resample_dataset(data_dir: Path, make_plots: bool = True) -> pd.DataFrame:
+def resample_dataset(data_dir: Path) -> pd.DataFrame:
     tracks = pd.read_csv(data_dir / "processed/tracks_mono.csv")
-    if tracks.empty or not tracks["channels"].eq(1).all() or not tracks[["sample_rate", "frames"]].gt(0).all().all():
+    if tracks.empty or not tracks["channels"].eq(1).all() or not tracks[["source_sample_rate", "source_frames"]].gt(0).all().all():
         raise ValueError("Нужна таблица непустых записей для сведения в моно.")
-    records = []
-    for row in tracks.itertuples():
-        changed = row.sample_rate != TARGET_SAMPLE_RATE
-        expected_frames = (row.frames * TARGET_SAMPLE_RATE + row.sample_rate - 1) // row.sample_rate
-        duration = expected_frames / TARGET_SAMPLE_RATE
-        record = row._asdict()
-        record.pop("Index")
-        record.update(source_sample_rate=row.sample_rate, source_frames=row.frames, source_duration_seconds=row.duration_seconds, was_resampled=changed, resample_method="soxr_hq" if changed else "unchanged", sample_rate=TARGET_SAMPLE_RATE, frames=expected_frames, duration_seconds=duration, duration_delta_seconds=duration - row.duration_seconds)
-        records.append(record)
-    processed = pd.DataFrame(records)
+    processed = tracks.copy()
+    processed["was_resampled"] = processed["source_sample_rate"].ne(TARGET_SAMPLE_RATE)
+    processed["resample_method"] = processed["was_resampled"].map({True: "soxr_hq", False: "unchanged"})
+    processed["sample_rate"] = TARGET_SAMPLE_RATE
+    processed["frames"] = (processed["source_frames"] * TARGET_SAMPLE_RATE + processed["source_sample_rate"] - 1) // processed["source_sample_rate"]
+    processed["duration_seconds"] = processed["frames"] / TARGET_SAMPLE_RATE
+    processed["duration_delta_seconds"] = processed["duration_seconds"] - processed["source_duration_seconds"]
     path = data_dir / "processed/tracks_resampled.csv"
-    temporary = path.with_suffix(".csv.part")
-    processed.to_csv(temporary, index=False)
-    temporary.replace(path)
+    save_csv(path, processed)
     print(f"Ресемплинг при загрузке: {processed['was_resampled'].sum()}; исходная частота уже подходит: {(~processed['was_resampled']).sum()}", flush=True)
     print(f"Таблица: {path}. WAV-копии не создаются.", flush=True)
-    if make_plots:
-        from plot_data import plot_resampling
-        plot_resampling(processed, data_dir, Path(__file__).resolve().parent / "plots")
     return processed
 
 
@@ -52,7 +45,11 @@ def main() -> None:
     parser.add_argument("--no-plots", action="store_true", help="Пропустить графики; в пайплайне они строятся отдельным этапом.")
     args = parser.parse_args()
     try:
-        resample_dataset(args.data_dir.expanduser().resolve(), make_plots=not args.no_plots)
+        data_dir = args.data_dir.expanduser().resolve()
+        processed = resample_dataset(data_dir)
+        if not args.no_plots:
+            from plot_data import plot_resampling
+            plot_resampling(processed, data_dir, Path(__file__).resolve().parent / "plots")
     except (OSError, RuntimeError, ValueError) as error:
         parser.exit(1, f"Ошибка ресемплинга: {error}\n")
 

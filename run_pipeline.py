@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from download_data import ARCHIVES, dataset_ready
+
 PROJECT_DIR = Path(__file__).resolve().parent
 
 
@@ -11,22 +13,16 @@ def run_script(name: str, data_dir: Path, *args: str) -> None:
 
 
 def run_pipeline(data_dir: Path) -> None:
-    metadata_dir = data_dir / "fma_metadata"
-    audio_dir = data_dir / "fma_small"
-    metadata_ready = all((metadata_dir / name).is_file() for name in ("tracks.csv", "genres.csv"))
-    audio_ready = audio_dir.is_dir() and next(audio_dir.glob("*/*.mp3"), None) is not None
-    for kind, folder, ready in (("metadata", metadata_dir, metadata_ready), ("audio", audio_dir, audio_ready)):
-        if ready:
-            print(f"Данные уже есть, скачивание пропущено: {folder}", flush=True)
-        elif folder.exists():
-            raise ValueError(f"Папка {folder} существует, но нужные файлы не найдены. Переместите её и повторите запуск.")
+    for kind, name in ARCHIVES.items():
+        if dataset_ready(data_dir, kind):
+            print(f"Данные уже есть, скачивание пропущено: {data_dir / name}", flush=True)
         else:
-            print(f"Данные не найдены, запускаю загрузку: {kind}", flush=True)
+            print(f"Проверка и загрузка набора: {kind}", flush=True)
             run_script("download_data.py", data_dir, "--only", kind)
-    stages = (("Подготовка метаданных", "prepare_data.py"), ("Проверка аудио", "validate_audio.py"), ("Анализ результатов", "analyze_data.py"))
-    for number, (title, script) in enumerate(stages, 1):
+    stages = (("Подготовка метаданных", "prepare_data.py", ("--no-plots",)), ("Проверка аудио", "validate_audio.py", ("--no-plots",)), ("Подготовка сведения в моно при загрузке", "process_audio.py", ("--all", "--no-plots")), ("Подготовка ресемплинга до 44 100 Гц при загрузке", "resample_audio.py", ("--no-plots",)), ("Подготовка фрагментов минимальной длины", "trim_audio.py", ("--no-plots",)), ("Проверка примеров и подготовка прослушивания", "check_audio.py", ("--no-plots",)), ("Анализ результатов", "analyze_data.py", ("--no-plots",)), ("Построение графиков", "plot_data.py", ("--kind", "all")))
+    for number, (title, script, extra_args) in enumerate(stages, 1):
         print(f"\n[{number}/{len(stages)}] {title}", flush=True)
-        run_script(script, data_dir)
+        run_script(script, data_dir, *extra_args)
     print("\nОбработка завершена.", flush=True)
 
 

@@ -52,7 +52,7 @@ python3 analyze_data.py
 python3 plot_data.py
 ```
 
-Если данные уже скачаны, первую команду можно пропустить. Для отдельной загрузки: `python3 download_data.py --only metadata` или `python3 download_data.py --only audio`.
+Если данные уже скачаны, первую команду можно пропустить. Загрузчик и пайплайн одинаково проверяют готовность: два непустых CSV метаданных и 8 000 непустых MP3. При неполной существующей папке выводится ошибка; скачанные файлы сохраняются. Для отдельной загрузки: `python3 download_data.py --only metadata` или `python3 download_data.py --only audio`.
 
 ## Файлы проекта
 
@@ -81,13 +81,39 @@ data/
 ├── fma_small/
 └── processed/
 reports/
-└── data_analysis/
+├── data_analysis/
+├── audio_check/
+└── mono/
 plots/
 ├── *.png
 ├── mono/
-└── resampling/
+├── resampling/
+└── audio_check/
 ```
 
 `data/processed/tracks_clean.csv` — записи для дальнейшей обработки. `tracks_excluded.csv` содержит причины исключения, `duplicates.csv` — найденные совпадения, `audio_summary.json` — итоги проверки аудио.
 
 Анализатор выводит результаты в терминал и сохраняет их в `reports/data_analysis/`: `checks.csv`, `analysis_summary.json`, таблицы распределений. Обзорный график сохраняется в `plots/overview.png`.
+
+В таблицах обработки `audio_path` всегда указывает на исходный MP3. Столбцы `source_sample_rate`, `source_channels`, `source_frames` и `source_duration_seconds` описывают исходный файл. Столбцы `sample_rate`, `channels`, `frames` и `duration_seconds` описывают результат соответствующего этапа в памяти. Исходные частоты и флаг `was_resampled` сохраняются для дальнейшего анализа.
+
+Готовые фрагменты читаются через `load_trimmed_audio` из `trim_audio.py`; параметры берутся из `tracks_trimmed.csv`.
+
+## Проверка обработки и прослушивание
+
+```bash
+python3 check_audio.py
+open reports/audio_check/index.html
+```
+
+Проверяются все исходные форматы, самая короткая и самая длинная запись. На текущем наборе выбираются пять примеров. Отчёт содержит параметры массивов, автоматические проверки и пары пятисекундных фрагментов. Графики сохраняются в `plots/audio_check/`.
+
+После прослушивания новых примеров подтверждение сохраняется командой:
+
+```bash
+python3 check_audio.py --confirm-listening
+```
+
+Подтверждения хранятся в `reports/audio_check/listening_confirmations.csv` отдельно от пересоздаваемого отчёта. При повторном запуске сохраняется статус прослушивания для тех же исходных и обработанных сигналов. Если сигнал изменился, пример снова ожидает прослушивания. Подтверждение пяти уже прослушанных примеров перенесено.
+
+Все графики можно перестроить командой `python3 plot_data.py`; только сравнения проверки — `python3 plot_data.py --kind audio-check`. Функции подготовки и анализа возвращают результаты, а командные оболочки этапов управляют запуском графиков.
